@@ -799,4 +799,6 @@ if __name__ == "__main__":
     print(f"  → http://localhost:5000")
     print(f"  → http://localhost:5000/guide")
     print(f"  → http://localhost:5000/admin  (compte admin)\n")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port, debug=True)
