@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}NFM Platform{% endblock %} — Noise Floor Meter</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+
+<nav class="navbar">
+  <a class="navbar-brand" href="{{ url_for('index') }}">
+    <span>◈</span> NFM<span class="dot">·</span>PLATFORM
+  </a>
+  {% if session.get('user_id') %}
+  <div class="navbar-nav">
+    <a class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}"
+       href="{{ url_for('dashboard') }}">Dashboard</a>
+    <a class="nav-link" href="{{ url_for('station_new') }}">+ Station</a>
+    <a class="nav-link {% if request.endpoint=='guide' %}active{% endif %}"
+       href="{{ url_for('guide') }}">Guide propagation</a>
+    {% if session.get('is_admin') %}
+    <a class="nav-link" href="{{ url_for('admin') }}"
+       style="color:var(--amber)">Admin</a>
+    {% endif %}
+  </div>
+  <span class="nav-callsign">{{ session.callsign }}</span>
+  <a class="nav-link" href="{{ url_for('logout') }}">Quitter</a>
+  {% else %}
+  <div class="navbar-nav" style="margin-left:auto">
+    <a class="nav-link" href="{{ url_for('guide') }}">Guide propagation</a>
+    <a class="nav-link" href="{{ url_for('login') }}">Connexion</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('register') }}">S'inscrire</a>
+  </div>
+  {% endif %}
+</nav>
+
+<main>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'success' if cat=='success' else 'error' }}">
+          {{ msg }}
+        </div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+<footer>
+  NFM Platform · Noise Floor Meter · F8AOF ·
+  <span id="footer-time" style="font-family:monospace"></span>
+</footer>
+
+<script>
+setInterval(() => {
+  document.getElementById('footer-time').textContent =
+    new Date().toLocaleTimeString('fr-FR');
+}, 1000);
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Connexion{% endblock %}
+{% block content %}
+<div style="max-width:400px;margin:60px auto">
+  <div class="page-title">CONNEXION</div>
+  <div class="card">
+    <form method="POST">
+      <div class="form-group">
+        <label class="form-label">Indicatif ou email</label>
+        <input class="form-control" name="identifier" required
+               autocomplete="username" placeholder="F8AOF ou email@exemple.com">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Mot de passe</label>
+        <input class="form-control" type="password" name="password"
+               required autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center">
+        Se connecter
+      </button>
+    </form>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--dim)">
+      Pas encore inscrit ?
+      <a href="{{ url_for('register') }}" style="color:var(--cyan)">S'inscrire</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

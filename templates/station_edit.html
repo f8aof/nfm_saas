@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Modifier' if station else 'Nouvelle' }} station{% endblock %}
+
+{% block content %}
+<div class="page-title">
+  {{ 'MODIFIER' if station else 'NOUVELLE' }} STATION · {{ session.callsign }}
+</div>
+
+<form method="POST" id="station-form">
+
+  <!-- ── IDENTITÉ ── -->
+  <div class="card">
+    <div class="card-title">IDENTITÉ DE LA STATION</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Nom de la station *</label>
+        <input class="form-control" name="name" required
+               value="{{ station.name if station else '' }}"
+               placeholder="ex: IC-706 HF / FT-817 VHF portable">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-control" name="description"
+               value="{{ station.description if station else '' }}"
+               placeholder="ex: Shack principal — Antenne R7">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARTE SON ── -->
+  <div class="card">
+    <div class="card-title">CARTE SON — ENTRÉE AUDIO</div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--dim)">
+        Détection automatique au lancement de l'agent.
+        Sélectionnez ici la carte son connectée à votre transceiver.
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="scanDevices()">
+        ↺ Rafraîchir
+      </button>
+    </div>
+
+    <!-- Liste des devices détectés via API agent -->
+    <div id="device-list" class="device-list" style="margin-bottom:12px">
+      <div style="color:var(--dim);font-size:11px;font-family:var(--mono);padding:8px">
+        ⟳ Lancement de l'agent requis pour détecter les cartes son...
+      </div>
+    </div>
+
+    <!-- Saisie manuelle si pas d'agent -->
+    <div class="form-group">
+      <label class="form-label">Nom de la carte son (saisie manuelle)</label>
+      <input class="form-control" name="audio_device_name" id="audio_device_name"
+             value="{{ station.audio_device_name if station else '' }}"
+             placeholder="ex: USB Audio CODEC, EMU 0202, Line In">
+      <div class="form-hint">
+        Sera détecté automatiquement si l'agent est lancé sur votre PC.
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Fréquence d'échantillonnage</label>
+        <select class="form-control" name="audio_sample_rate">
+          <option value="44100" {{ 'selected' if station and station.audio_sample_rate==44100 }}>44100 Hz</option>
+          <option value="48000" {{ 'selected' if not station or station.audio_sample_rate==48000 }}>48000 Hz (recommandé)</option>
+          <option value="96000" {{ 'selected' if station and station.audio_sample_rate==96000 }}>96000 Hz</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Résolution</label>
+        <select class="form-control" name="audio_bits">
+          <option value="16" {{ 'selected' if station and station.audio_bits==16 }}>16 bits (96 dB dynamique)</option>
+          <option value="24" {{ 'selected' if not station or station.audio_bits==24 }}>24 bits (144 dB théorique)</option>
+          <option value="32" {{ 'selected' if station and station.audio_bits==32 }}>32 bits float</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TRANSCEIVER ── -->
+  <div class="card">
+    <div class="card-title">TRANSCEIVER — CONTRÔLE CAT</div>
+
+    <!-- Sélection rapide par marque -->
+    <div class="form-group">
+      <label class="form-label">Marque</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="brand-buttons">
+        {% for brand in ['Icom','Yaesu','Kenwood','Elecraft','FlexRadio','SDR','Autre'] %}
+        <button type="button" class="btn btn-ghost btn-sm brand-btn"
+                data-brand="{{ brand }}"
+                onclick="filterBrand('{{ brand }}')">{{ brand }}</button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Recherche Hamlib -->
+    <div class="form-group" style="position:relative">
+      <label class="form-label">Modèle (recherche dans la base Hamlib)</label>
+      <input type="text" class="form-control" id="rig-search"
+             placeholder="Tapez le modèle ou l'ID Hamlib… ex: IC-706, FT-991, 3021"
+             value="{{ (station.rig_brand + ' ' + station.rig_model) if station and station.rig_model else '' }}"
+             autocomplete="off"
+             oninput="searchRig(this.value)">
+      <div id="rig-search-results"></div>
+    </div>
+
+    <!-- Champs cachés remplis par la sélection -->
+    <input type="hidden" name="rig_brand"     id="rig_brand"
+           value="{{ station.rig_brand if station else '' }}">
+    <input type="hidden" name="rig_model"     id="rig_model"
+           value="{{ station.rig_model if station else '' }}">
+    <input type="hidden" name="rig_hamlib_id" id="rig_hamlib_id"
+           value="{{ station.rig_hamlib_id if station else '' }}">
+
+    <!-- Info rig sélectionné -->
+    <div id="rig-selected-info" style="display:none;margin-bottom:12px"
+         class="alert alert-info">
+      <span id="rig-selected-text"></span>
+    </div>
+
+    <!-- Connexion série -->
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Port série</label>
+        <input class="form-control" name="rig_port" id="rig_port"
+               value="{{ station.rig_port if station else '' }}"
+               placeholder="Linux: /dev/ttyUSB0  Windows: COM3">
+        <div class="form-hint">
+          Linux : <code>/dev/ttyUSB0</code> ou <code>/dev/ttyACM0</code> —
+          Windows : <code>COM3</code>, <code>COM4</code>…
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Vitesse (baud)</label>
+        <select class="form-control" name="rig_baud" id="rig_baud">
+          {% for baud in [1200,2400,4800,9600,19200,38400,57600,115200] %}
+          <option value="{{ baud }}"
+            {{ 'selected' if station and station.rig_baud==baud
+               else ('selected' if not station and baud==9600) }}>
+            {{ baud }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">PTT type</label>
+        <select class="form-control" name="rig_ptt_type">
+          {% for ptt in ['RTS','DTR','CAT','NONE'] %}
+          <option value="{{ ptt }}"
+            {{ 'selected' if station and station.rig_ptt_type==ptt }}>
+            {{ ptt }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Commande rigctld générée</label>
+        <div class="form-control" id="rigctld-preview"
+             style="color:var(--cyan);font-family:var(--mono);font-size:11px;
+                    cursor:text;user-select:all">
+          rigctld -m <span id="prev-id">?</span>
+          -r <span id="prev-port">?</span>
+          -s <span id="prev-baud">9600</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:8px">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="testCAT()">
+        ⚡ Tester la connexion CAT
+      </button>
+      <span id="cat-test-result" style="font-family:var(--mono);font-size:11px;
+            margin-left:10px;color:var(--dim)"></span>
+    </div>
+  </div>
+
+  <!-- ── PARAMÈTRES FFT ── -->
+  <div class="card">
+    <div class="card-title">PARAMÈTRES DE MESURE FFT</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Taille FFT</label>
+        <select class="form-control" name="fft_size">
+          {% for sz in [1024,2048,4096,8192,16384] %}
+          <option value="{{ sz }}"
+            {{ 'selected' if station and station.fft_size==sz
+               else ('selected' if not station and sz==4096) }}>
+            {{ sz }} pts — {{ "%.1f"|format(48000/sz) }} Hz/bin
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fenêtrage</label>
+        <select class="form-control" name="fft_window">
+          <option value="hann"     {{ 'selected' if not station or station.fft_window=='hann' }}>Hann (bruit large bande)</option>
+          <option value="blackman" {{ 'selected' if station and station.fft_window=='blackman' }}>Blackman-Harris (meilleure rejection)</option>
+          <option value="flattop"  {{ 'selected' if station and station.fft_window=='flattop' }}>Flat-top (mesure amplitude)</option>
+          <option value="rect"     {{ 'selected' if station and station.fft_window=='rect' }}>Rectangulaire</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Moyennage (trames)</label>
+        <input type="number" class="form-control" name="fft_avg" min="4" max="128"
+               value="{{ station.fft_avg if station else 32 }}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Percentile plancher (P10 recommandé)</label>
+        <input type="number" class="form-control" name="percentile" min="1" max="30"
+               value="{{ station.percentile if station else 10 }}">
+      </div>
+    </div>
+    {% if station %}
+    <div class="form-group">
+      <label class="form-label">Offset calibration dBFS → dBm</label>
+      <input type="number" class="form-control" name="cal_offset" step="0.1"
+             value="{{ station.cal_offset if station and station.cal_offset else '' }}"
+             placeholder="Laisser vide si non calibré">
+      <div class="form-hint">Calculé automatiquement lors de la calibration depuis la page Live.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── ACTIONS ── -->
+  <div class="btn-group" style="margin-top:8px">
+    <button type="submit" class="btn btn-primary">
+      ✓ {{ 'Mettre à jour' if station else 'Créer la station' }}
+    </button>
+    <a class="btn btn-ghost" href="{{ url_for('dashboard') }}">Annuler</a>
+  </div>
+
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Hamlib search ──
+let rigSearchTimeout;
+const hamlib_rigs = {{ hamlib_rigs|tojson }};
+
+function searchRig(q) {
+  clearTimeout(rigSearchTimeout);
+  const res = document.getElementById('rig-search-results');
+  if (!q || q.length < 1) { res.innerHTML = ''; return; }
+  rigSearchTimeout = setTimeout(() => {
+    const lower = q.toLowerCase();
+    const matches = hamlib_rigs.filter(r =>
+      r.model.toLowerCase().includes(lower) ||
+      r.brand.toLowerCase().includes(lower) ||
+      String(r.id).includes(lower)
+    ).slice(0, 20);
+    if (!matches.length) { res.innerHTML = ''; return; }
+    res.innerHTML = matches.map(r => `
+      <div class="rig-result-item" onclick="selectRig(${JSON.stringify(r).replace(/"/g,'&quot;')})">
+        <span><b>${r.brand}</b> ${r.model}</span>
+        <span class="rig-id">ID ${r.id} · ${r.protocols.join('/')} · ${r.default_baud||'—'} baud</span>
+      </div>`).join('');
+  }, 150);
+}
+
+function filterBrand(brand) {
+  document.querySelectorAll('.brand-btn').forEach(b =>
+    b.classList.toggle('btn-primary', b.dataset.brand === brand));
+  document.getElementById('rig-search').value = brand;
+  searchRig(brand);
+}
+
+function selectRig(rig) {
+  document.getElementById('rig_brand').value     = rig.brand;
+  document.getElementById('rig_model').value     = rig.model;
+  document.getElementById('rig_hamlib_id').value = rig.id;
+  document.getElementById('rig-search').value    = `${rig.brand} ${rig.model}`;
+  document.getElementById('rig-search-results').innerHTML = '';
+  // Auto-remplir le baudrate
+  if (rig.default_baud) {
+    const sel = document.querySelector('[name=rig_baud]');
+    for (let o of sel.options) if (o.value == rig.default_baud) o.selected = true;
+  }
+  // Afficher info
+  const info = document.getElementById('rig-selected-info');
+  info.style.display = 'block';
+  document.getElementById('rig-selected-text').textContent =
+    `✓ ${rig.brand} ${rig.model} — Hamlib ID ${rig.id} — ${rig.protocols.join(' / ')}`;
+  updateRigctldPreview();
+}
+
+// ── rigctld preview ──
+function updateRigctldPreview() {
+  document.getElementById('prev-id').textContent =
+    document.getElementById('rig_hamlib_id').value || '?';
+  document.getElementById('prev-port').textContent =
+    document.querySelector('[name=rig_port]').value || '?';
+  document.getElementById('prev-baud').textContent =
+    document.querySelector('[name=rig_baud]').value;
+}
+document.querySelector('[name=rig_port]')?.addEventListener('input', updateRigctldPreview);
+document.querySelector('[name=rig_baud]')?.addEventListener('change', updateRigctldPreview);
+updateRigctldPreview();
+
+// ── Scan devices (via agent local si disponible) ──
+function scanDevices() {
+  fetch('/api/agent/devices').then(r => r.json()).then(devices => {
+    const list = document.getElementById('device-list');
+    if (!devices.length) {
+      list.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:8px;font-family:var(--mono)">Aucun périphérique détecté</div>';
+      return;
+    }
+    list.innerHTML = devices.map(d => `
+      <div class="device-item" onclick="selectDevice(this, '${d.name}')">
+        <span class="device-name">${d.name}</span>
+        <span class="device-info">${d.channels}ch · ${d.sample_rate} Hz</span>
+      </div>`).join('');
+  }).catch(() => {
+    document.getElementById('device-list').innerHTML =
+      '<div style="color:var(--dim);font-size:11px;padding:8px;font-family:var(--mono)">Agent non disponible — saisie manuelle</div>';
+  });
+}
+
+function selectDevice(el, name) {
+  document.querySelectorAll('.device-item').forEach(d => d.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('audio_device_name').value = name;
+}
+
+// Test CAT (requiert agent)
+function testCAT() {
+  const res = document.getElementById('cat-test-result');
+  res.textContent = '⟳ Test en cours…';
+  res.style.color = 'var(--dim)';
+  fetch('/api/agent/cat-test', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      hamlib_id: document.getElementById('rig_hamlib_id').value,
+      port: document.querySelector('[name=rig_port]').value,
+      baud: document.querySelector('[name=rig_baud]').value,
+    })
+  }).then(r => r.json()).then(d => {
+    res.textContent = d.ok ? `✓ OK — ${d.freq_hz/1e6} MHz ${d.mode}` : `✗ Erreur : ${d.error}`;
+    res.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+  }).catch(() => {
+    res.textContent = 'Agent non disponible';
+    res.style.color = 'var(--amber)';
+  });
+}
+
+// Fermer les résultats si clic ailleurs
+document.addEventListener('click', e => {
+  if (!e.target.closest('#rig-search') && !e.target.closest('#rig-search-results'))
+    document.getElementById('rig-search-results').innerHTML = '';
+});
+
+// Scan auto au chargement
+scanDevices();
+</script>
+{% endblock %}

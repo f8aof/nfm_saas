@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Historique — {{ station.name }}{% endblock %}
+
+{% block content %}
+<div class="page-title">HISTORIQUE · {{ station.name }}</div>
+
+<!-- Filtres -->
+<div class="card" style="margin-bottom:12px">
+  <form method="GET" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+    <div>
+      <label class="form-label">Période</label>
+      <select class="form-control" name="hours" onchange="this.form.submit()"
+              style="width:auto">
+        {% for h, label in [(1,'1 heure'),(6,'6 heures'),(24,'24 heures'),
+                             (72,'3 jours'),(168,'7 jours')] %}
+        <option value="{{ h }}" {{ 'selected' if hours==h }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--dim);
+                padding-bottom:8px">
+      {{ measurements|length }} mesures sur {{ hours }}h
+    </div>
+    <a class="btn btn-ghost btn-sm" style="margin-left:auto"
+       href="{{ url_for('station_live', sid=station.id) }}">▶ Live</a>
+  </form>
+</div>
+
+{% if not measurements %}
+<div class="card" style="text-align:center;padding:40px;color:var(--dim)">
+  <div style="font-size:28px;margin-bottom:10px">📊</div>
+  Aucune mesure sur cette période.<br>
+  <a href="{{ url_for('station_live', sid=station.id) }}"
+     style="color:var(--cyan)">Démarrez une session de mesure.</a>
+</div>
+{% else %}
+
+<!-- Stats rapides -->
+<div class="grid-4" style="margin-bottom:12px">
+  {% set nf_vals = measurements|map(attribute='nf_dbfs')|list %}
+  <div class="metric-box">
+    <div class="metric-label">PLANCHER MIN</div>
+    <div class="metric-val green">{{ "%.1f"|format(nf_vals|min) }}</div>
+    <div class="metric-unit">dBFS/Hz</div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">PLANCHER MÉDIAN</div>
+    {% set sorted = nf_vals|sort %}
+    <div class="metric-val">{{ "%.1f"|format(sorted[sorted|length//2]) }}</div>
+    <div class="metric-unit">dBFS/Hz</div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">PLANCHER MAX</div>
+    <div class="metric-val amber">{{ "%.1f"|format(nf_vals|max) }}</div>
+    <div class="metric-unit">dBFS/Hz</div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">MESURES</div>
+    <div class="metric-val dim">{{ measurements|length }}</div>
+  </div>
+</div>
+
+<!-- Graphe -->
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">ÉVOLUTION DU PLANCHER DE BRUIT</div>
+  <canvas id="hist-chart" style="width:100%;height:220px;background:#050709;
+                                   border:1px solid var(--border)"></canvas>
+</div>
+
+<!-- Tableau -->
+<div class="card">
+  <div class="card-title">DONNÉES BRUTES</div>
+  <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Horodatage</th>
+          <th>Plancher (dBFS/Hz)</th>
+          {% if measurements[0].nf_dbm %}<th>Plancher (dBm/Hz)</th>{% endif %}
+          <th>RMS (dBFS)</th>
+          <th>Fréquence</th>
+          <th>Mode</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in measurements[-200:]|reverse %}
+        <tr>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--dim)">
+            {{ datetime.fromtimestamp(m.timestamp).strftime('%d/%m %H:%M:%S') }}
+          </td>
+          <td style="font-family:var(--mono);color:var(--cyan)">
+            {{ "%.2f"|format(m.nf_dbfs) }}
+          </td>
+          {% if m.nf_dbm %}
+          <td style="font-family:var(--mono);color:var(--amber)">
+            {{ "%.2f"|format(m.nf_dbm) }}
+          </td>
+          {% endif %}
+          <td style="font-family:var(--mono);font-size:11px">
+            {{ "%.1f"|format(m.rms_dbfs) if m.rms_dbfs else '---' }}
+          </td>
+          <td style="font-family:var(--mono);font-size:11px">
+            {{ "%.3f MHz"|format(m.freq_hz/1e6) if m.freq_hz else '---' }}
+          </td>
+          <td>
+            {% if m.mode %}
+            <span class="badge badge-dim">{{ m.mode }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <!-- Export -->
+  <div style="margin-top:10px">
+    <a class="btn btn-success btn-sm"
+       href="/api/station/{{ station.id }}/data?hours={{ hours }}&format=csv">
+      ⬇ Exporter CSV
+    </a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if measurements %}
+<script>
+const canvas = document.getElementById('hist-chart');
+const ctx = canvas.getContext('2d');
+
+// Données
+const labels = {{ measurements|map(attribute='timestamp')|list|tojson }};
+const nfData  = {{ measurements|map(attribute='nf_dbfs')|list|tojson }};
+
+function draw() {
+  const W = canvas.offsetWidth || 800;
+  const H = 220;
+  canvas.width = W; canvas.height = H;
+
+  const dbLow  = Math.min(...nfData) - 8;
+  const dbHigh = Math.max(...nfData) + 8;
+  const t0 = labels[0], tEnd = labels[labels.length-1];
+  const step = W / (labels.length - 1);
+
+  ctx.fillStyle = '#050709'; ctx.fillRect(0,0,W,H);
+
+  // Grid
+  for (let db = Math.floor(dbLow/5)*5; db <= dbHigh; db += 5) {
+    const y = H - (db - dbLow) / (dbHigh - dbLow) * H;
+    ctx.strokeStyle = db % 10 === 0 ? '#1a2535' : '#0d1218';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    ctx.fillStyle = '#2a3a55'; ctx.font = '8px monospace';
+    ctx.fillText(db.toFixed(0), 2, y-2);
+  }
+
+  // Fill
+  ctx.beginPath();
+  nfData.forEach((v,i) => {
+    const x = i * step, y = H - (v - dbLow) / (dbHigh - dbLow) * H;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.lineTo((nfData.length-1)*step, H); ctx.lineTo(0,H); ctx.closePath();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgba(0,212,255,0.2)'); g.addColorStop(1,'rgba(0,212,255,0.01)');
+  ctx.fillStyle = g; ctx.fill();
+
+  // Line
+  ctx.beginPath(); ctx.strokeStyle='#00d4ff'; ctx.lineWidth=1.5;
+  nfData.forEach((v,i) => {
+    const x=i*step, y=H-(v-dbLow)/(dbHigh-dbLow)*H;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  // Min line
+  const minV = Math.min(...nfData);
+  const my = H - (minV - dbLow) / (dbHigh - dbLow) * H;
+  ctx.strokeStyle='rgba(0,230,118,0.6)'; ctx.setLineDash([3,5]);
+  ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,my); ctx.lineTo(W,my); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle='#00e676'; ctx.font='9px monospace';
+  ctx.fillText(`min = ${minV.toFixed(1)} dBFS/Hz`, 6, my-3);
+}
+
+draw();
+window.addEventListener('resize', draw);
+</script>
+{% endif %}
+{% endblock %}

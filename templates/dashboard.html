@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-title">Dashboard · {{ session.callsign }}</div>
+
+<!-- Résumé rapide -->
+<div class="grid-4" style="margin-bottom:20px">
+  <div class="metric-box">
+    <div class="metric-label">Stations</div>
+    <div class="metric-val">{{ stations|length }}</div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">En ligne</div>
+    <div class="metric-val green" id="online-count">0</div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">Mesures totales</div>
+    <div class="metric-val dim">
+      {{ stats_map.values()|sum(attribute='n_meas') or 0 }}
+    </div>
+  </div>
+  <div class="metric-box">
+    <div class="metric-label">Meilleur plancher</div>
+    <div class="metric-val amber">
+      {% set mins = stats_map.values()|selectattr('nf_min')|map(attribute='nf_min')|list %}
+      {% if mins %}{{ "%.1f"|format(mins|min) }}{% else %}---{% endif %}
+      <span style="font-size:10px;color:var(--dim)"> dBFS</span>
+    </div>
+  </div>
+</div>
+
+<!-- Stations -->
+<div class="card-header">
+  <div class="card-title" style="margin:0">MES STATIONS</div>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('station_new') }}">
+    + Nouvelle station
+  </a>
+</div>
+
+{% if not stations %}
+<div class="card" style="text-align:center;padding:40px;color:var(--dim)">
+  <div style="font-size:32px;margin-bottom:12px">◈</div>
+  <div style="font-family:var(--mono);font-size:13px;margin-bottom:16px">
+    Aucune station configurée
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('station_new') }}">
+    Créer ma première station
+  </a>
+</div>
+{% else %}
+<div class="grid-2">
+{% for st in stations %}
+{% set stat = stats_map.get(st.id) %}
+{% set is_online = st.id in online %}
+<div class="station-card {{ 'online' if is_online else 'offline' }}"
+     id="station-card-{{ st.id }}">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div class="station-name">
+      <span class="status-dot {{ 'online' if is_online else 'offline' }}"
+            id="dot-{{ st.id }}"></span>
+      {{ st.name }}
+    </div>
+    <span class="badge {{ 'badge-green' if is_online else 'badge-dim' }}"
+          id="badge-{{ st.id }}">
+      {{ 'EN LIGNE' if is_online else 'HORS LIGNE' }}
+    </span>
+  </div>
+
+  <div class="station-meta">
+    {% if st.rig_brand %}
+      📻 {{ st.rig_brand }} {{ st.rig_model }}
+      {% if st.rig_hamlib_id %}<span class="badge badge-dim" style="font-size:8px">Hamlib {{ st.rig_hamlib_id }}</span>{% endif %}
+      <br>
+    {% endif %}
+    {% if st.audio_device_name %}
+      🔊 {{ st.audio_device_name }}<br>
+    {% endif %}
+    {% if st.rig_port %}
+      🔌 {{ st.rig_port }} · {{ st.rig_baud }} baud<br>
+    {% endif %}
+    {% if st.description %}
+      {{ st.description }}<br>
+    {% endif %}
+    <span style="color:var(--dim);font-size:10px">
+      FFT {{ st.fft_size }} pts · {{ st.audio_bits }} bits / {{ st.audio_sample_rate }} Hz
+    </span>
+  </div>
+
+  <!-- Métriques live si disponible -->
+  <div class="grid-3" style="margin-bottom:12px" id="live-metrics-{{ st.id }}">
+    <div class="metric-box">
+      <div class="metric-label">Plancher P{{ st.percentile }}</div>
+      <div class="metric-val" id="nf-{{ st.id }}" style="font-size:15px">---</div>
+      <div class="metric-unit">dBFS/Hz</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Min session</div>
+      <div class="metric-val green" id="nfmin-{{ st.id }}" style="font-size:15px">
+        {% if stat and stat.nf_min %}{{ "%.1f"|format(stat.nf_min) }}{% else %}---{% endif %}
+      </div>
+      <div class="metric-unit">dBFS/Hz</div>
+    </div>
+    <div class="metric-box">
+      <div class="metric-label">Fréquence</div>
+      <div class="metric-val amber" id="freq-{{ st.id }}" style="font-size:13px">---</div>
+      <div class="metric-unit">MHz</div>
+    </div>
+  </div>
+
+  <div class="btn-group">
+    <a class="btn btn-primary btn-sm"
+       href="{{ url_for('station_live', sid=st.id) }}">▶ Live</a>
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('station_history', sid=st.id) }}">📈 Historique</a>
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('station_edit', sid=st.id) }}">⚙ Config</a>
+    <form method="POST" action="{{ url_for('station_delete', sid=st.id) }}"
+          style="margin-left:auto"
+          onsubmit="return confirm('Supprimer cette station ?')">
+      <button class="btn btn-danger btn-sm" type="submit">✕</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<!-- Agent download -->
+<div class="card" style="margin-top:20px">
+  <div class="card-title">AGENT LOCAL — À INSTALLER SUR VOTRE PC</div>
+  <div style="font-size:12px;color:var(--dim);line-height:1.8;margin-bottom:12px">
+    L'agent local capte le signal audio de votre carte son, effectue l'analyse FFT
+    et envoie les mesures à cette plateforme en temps réel.
+    Il gère également le contrôle CAT de votre transceiver via Hamlib.
+  </div>
+  <div style="font-family:var(--mono);font-size:11px;background:var(--surf2);
+              padding:10px 14px;border:1px solid var(--border);border-radius:3px;
+              color:var(--cyan);margin-bottom:12px">
+    # Linux / macOS<br>
+    python3 agent.py --station-id &lt;ID&gt; --server ws://localhost:5000<br><br>
+    # Windows<br>
+    python agent.py --station-id &lt;ID&gt; --server ws://localhost:5000
+  </div>
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('static', filename='agent.py') }}">
+    ⬇ Télécharger agent.py
+  </a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const socket = io();
+const stationIds = {{ stations|map(attribute='id')|list|tojson }};
+let onlineCount = 0;
+
+// S'abonner à toutes les stations du dashboard
+stationIds.forEach(sid => {
+  socket.emit('watch_station', {station_id: sid});
+});
+
+socket.on('station_online', data => {
+  const sid = data.station_id;
+  document.getElementById(`dot-${sid}`)?.classList.replace('offline','online');
+  document.getElementById(`badge-${sid}`)?.classList.replace('badge-dim','badge-green');
+  document.getElementById(`badge-${sid}`).textContent = 'EN LIGNE';
+  document.getElementById(`station-card-${sid}`)?.classList.replace('offline','online');
+  onlineCount++;
+  document.getElementById('online-count').textContent = onlineCount;
+});
+
+socket.on('station_offline', data => {
+  const sid = data.station_id;
+  document.getElementById(`dot-${sid}`)?.classList.replace('online','offline');
+  document.getElementById(`badge-${sid}`)?.classList.replace('badge-green','badge-dim');
+  if (document.getElementById(`badge-${sid}`))
+    document.getElementById(`badge-${sid}`).textContent = 'HORS LIGNE';
+  document.getElementById(`station-card-${sid}`)?.classList.replace('online','offline');
+  onlineCount = Math.max(0, onlineCount - 1);
+  document.getElementById('online-count').textContent = onlineCount;
+});
+
+socket.on('live_data', data => {
+  const sid = data.station_id;
+  const nfEl   = document.getElementById(`nf-${sid}`);
+  const freqEl = document.getElementById(`freq-${sid}`);
+  if (nfEl && data.nf_dbfs != null)
+    nfEl.textContent = data.nf_dbfs.toFixed(1);
+  if (freqEl && data.freq_hz)
+    freqEl.textContent = (data.freq_hz / 1e6).toFixed(3);
+});
+</script>
+{% endblock %}

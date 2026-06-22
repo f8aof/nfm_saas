@@ -1,0 +1,499 @@
+{% extends "base.html" %}
+{% block title %}Live — {{ station.name }}{% endblock %}
+
+{% block head %}
+<style>
+.live-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) { .live-grid { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- En-tête station -->
+<div class="live-header">
+  <div>
+    <div class="live-station-name">
+      <span class="status-dot" id="status-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--dim);margin-right:8px"></span>
+      {{ station.name }}
+    </div>
+    <div class="live-callsign">{{ station.callsign }}</div>
+  </div>
+
+  <!-- CAT fréquence -->
+  <div style="text-align:center">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--dim);
+                letter-spacing:.1em;margin-bottom:2px">FRÉQUENCE CAT</div>
+    <div>
+      <span id="cat-freq-display">--- MHz</span>
+      <span id="cat-mode-display">---</span>
+    </div>
+  </div>
+
+  <div class="btn-group">
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('station_history', sid=station.id) }}">📈 Historique</a>
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('station_edit', sid=station.id) }}">⚙ Config</a>
+    <a class="btn btn-ghost btn-sm"
+       href="{{ url_for('dashboard') }}">← Dashboard</a>
+  </div>
+</div>
+
+<!-- Bannière hors-ligne -->
+<div class="offline-banner {% if online %}hidden{% endif %}" id="offline-banner">
+  ● Station hors-ligne — Lancez l'agent local pour démarrer la mesure
+  <code style="font-size:10px;margin-left:10px">
+    python3 agent.py --station-id {{ station.id }} --server http://localhost:5000
+  </code>
+</div>
+
+<div class="live-grid">
+
+  <!-- ── GAUCHE : Métriques ── -->
+  <div>
+    <!-- Plancher principal -->
+    <div class="card" style="text-align:center;padding:20px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--dim);
+                  letter-spacing:.15em;margin-bottom:6px">
+        PLANCHER DE BRUIT P{{ station.percentile }}
+      </div>
+      <div id="nf-big" style="font-family:var(--mono);font-size:42px;
+                               font-weight:bold;color:var(--cyan);
+                               text-shadow:0 0 20px rgba(0,212,255,0.3);
+                               line-height:1">---</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--dim);
+                  margin-top:4px">dBFS/Hz</div>
+      {% if station.cal_offset %}
+      <div id="nf-dbm" style="font-family:var(--mono);font-size:18px;
+                                color:var(--amber);margin-top:6px">--- dBm/Hz</div>
+      {% endif %}
+    </div>
+
+    <!-- Barre RMS -->
+    <div class="card">
+      <div class="card-title">NIVEAU RMS INSTANTANÉ</div>
+      <div class="rms-bar-track">
+        <div class="rms-bar-fill" id="rms-bar"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;
+                  font-family:var(--mono);font-size:9px;color:var(--dim)">
+        <span>−96</span><span>−48</span><span>−12</span><span>0 dBFS</span>
+      </div>
+    </div>
+
+    <!-- Métriques grille -->
+    <div class="grid-2" style="gap:6px">
+      {% set metrics = [
+        ('PLANCHER MIN', 'nf-min', 'green'),
+        ('PLANCHER MAX', 'nf-max', 'amber'),
+        ('NIVEAU RMS',  'rms',    'text'),
+        ('CRÊTE',       'peak',   'text'),
+        ('ÉCRÊTAGES',   'clips',  'red'),
+        ('TRAMES FFT',  'frames', 'dim'),
+      ] %}
+      {% for label, key, color in metrics %}
+      <div class="metric-box">
+        <div class="metric-label">{{ label }}</div>
+        <div class="metric-val {{ color }}" id="m-{{ key }}"
+             style="font-size:16px">---</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Durée -->
+    <div class="card" style="margin-top:6px;text-align:center">
+      <div class="metric-label">DURÉE SESSION</div>
+      <div class="metric-val dim" id="m-dur" style="font-size:16px">00:00</div>
+    </div>
+
+    <!-- Calibration -->
+    <div class="card" style="margin-top:6px">
+      <div class="card-title">CALIBRATION dBFS → dBm</div>
+      <div class="form-row" style="grid-template-columns:1fr auto">
+        <div>
+          <label class="form-label">Réf. (dBm)</label>
+          <input class="form-control" type="number" id="cal-ref"
+                 value="-73" step="0.5"
+                 style="font-size:13px;padding:5px 8px">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-amber btn-sm" onclick="calibrate()">⚖ Calibrer</button>
+        </div>
+      </div>
+      <div id="cal-result" style="font-family:var(--mono);font-size:10px;
+                                   color:var(--dim);margin-top:6px">
+        {% if station.cal_offset %}
+          Offset actuel : {{ "+%.1f"|format(station.cal_offset) }} dB
+        {% else %}
+          Non calibré
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Contrôle CAT -->
+    <div class="card" style="margin-top:6px">
+      <div class="card-title">CONTRÔLE CAT</div>
+      <div style="margin-bottom:8px">
+        <label class="form-label">Fréquence (MHz)</label>
+        <div style="display:flex;gap:6px">
+          <input class="form-control" type="number" id="cat-freq-input"
+                 step="0.001" placeholder="14.200"
+                 style="font-size:13px;padding:5px 8px">
+          <button class="btn btn-amber btn-sm" onclick="sendFreq()">→</button>
+        </div>
+      </div>
+      <div style="margin-bottom:8px">
+        <label class="form-label">Mode</label>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          {% for mode in ['USB','LSB','AM','FM','CW','RTTY'] %}
+          <button class="btn btn-ghost btn-sm" onclick="sendMode('{{ mode }}')">
+            {{ mode }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      <!-- Bandes rapides -->
+      <div>
+        <label class="form-label">Bandes rapides</label>
+        <div style="display:flex;flex-wrap:wrap;gap:3px">
+          {% set bands = [('160m',1.840),('80m',3.700),('40m',7.100),
+                          ('20m',14.200),('15m',21.200),('10m',28.500),
+                          ('6m',50.100),('2m',144.200)] %}
+          {% for name, freq in bands %}
+          <button class="btn btn-ghost btn-sm"
+                  onclick="sendFreqMHz({{ freq }})">{{ name }}</button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div style="margin-top:8px">
+      <button class="btn btn-success btn-sm" onclick="exportCSV()"
+              style="width:100%;justify-content:center">
+        ⬇ Exporter CSV
+      </button>
+    </div>
+  </div>
+
+  <!-- ── DROITE : Graphes ── -->
+  <div>
+    <!-- PSD -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-title">
+        DENSITÉ SPECTRALE DE PUISSANCE — PSD (dBFS/Hz)
+        <span id="psd-info" style="float:right;font-size:10px;color:var(--cyan)"></span>
+      </div>
+      <canvas id="psd-canvas"></canvas>
+      <div id="psd-tooltip" style="font-family:var(--mono);font-size:10px;
+                                    color:var(--cyan);margin-top:4px;height:14px"></div>
+    </div>
+
+    <!-- Historique -->
+    <div class="card">
+      <div class="card-title">HISTORIQUE PLANCHER DE BRUIT</div>
+      <canvas id="hist-canvas"></canvas>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STATION_ID  = {{ station.id }};
+const CAL_OFFSET  = {{ station.cal_offset or 'null' }};
+const PERCENTILE  = {{ station.percentile }};
+const socket = io();
+
+// ── État local ──
+let nfHistory = [];
+let psdData   = null;
+let psdFreqs  = null;
+let nfMin     = Infinity, nfMax = -Infinity;
+let sessionStart = null;
+let calOffset = CAL_OFFSET;
+let frameCount = 0, clipCount = 0;
+let durTimer;
+
+// ── WebSocket ──
+socket.emit('watch_station', {station_id: STATION_ID});
+
+socket.on('station_online', () => {
+  document.getElementById('status-dot').style.background = 'var(--green)';
+  document.getElementById('status-dot').style.boxShadow = '0 0 8px var(--green)';
+  document.getElementById('offline-banner').classList.add('hidden');
+  if (!sessionStart) sessionStart = Date.now();
+  startDurTimer();
+});
+
+socket.on('station_offline', () => {
+  document.getElementById('status-dot').style.background = 'var(--dim)';
+  document.getElementById('status-dot').style.boxShadow = 'none';
+  document.getElementById('offline-banner').classList.remove('hidden');
+  clearInterval(durTimer);
+});
+
+socket.on('live_data', data => {
+  if (data.station_id !== STATION_ID) return;
+  const nf   = data.nf_dbfs;
+  const rms  = data.rms_dbfs;
+  const peak = data.peak_dbfs;
+  frameCount++;
+  clipCount = data.clip_count || clipCount;
+
+  if (!sessionStart) { sessionStart = Date.now(); startDurTimer(); }
+
+  nfHistory.push({t: data.timestamp, nf});
+  if (nfHistory.length > 1200) nfHistory.shift();
+  if (nf < nfMin) nfMin = nf;
+  if (nf > nfMax) nfMax = nf;
+
+  // Big display
+  document.getElementById('nf-big').textContent = nf.toFixed(1);
+  if (calOffset !== null) {
+    const dbm = nf + calOffset;
+    const el = document.getElementById('nf-dbm');
+    if (el) el.textContent = dbm.toFixed(1) + ' dBm/Hz';
+  }
+
+  // Métriques
+  document.getElementById('m-nf-min').textContent  = nfMin.toFixed(1);
+  document.getElementById('m-nf-max').textContent  = nfMax.toFixed(1);
+  document.getElementById('m-rms').textContent     = rms != null ? rms.toFixed(1) : '---';
+  document.getElementById('m-peak').textContent    = peak != null ? peak.toFixed(1) : '---';
+  document.getElementById('m-clips').textContent   = clipCount;
+  document.getElementById('m-frames').textContent  = frameCount;
+
+  // RMS bar
+  if (rms != null) {
+    const pct = Math.max(0, Math.min(100, (rms + 96) / 96 * 100));
+    const bar = document.getElementById('rms-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = rms > -6 ? 'var(--red)' : rms > -12 ? 'var(--amber)' : 'var(--cyan)';
+  }
+
+  // CAT
+  if (data.freq_hz) {
+    document.getElementById('cat-freq-display').textContent =
+      (data.freq_hz / 1e6).toFixed(3) + ' MHz';
+    document.getElementById('cat-freq-input').value =
+      (data.freq_hz / 1e6).toFixed(3);
+  }
+  if (data.mode)
+    document.getElementById('cat-mode-display').textContent = data.mode;
+
+  drawHist();
+});
+
+socket.on('live_psd', data => {
+  if (data.station_id !== STATION_ID) return;
+  psdFreqs = data.freqs;
+  psdData  = data.psd;
+  document.getElementById('psd-info').textContent =
+    `P${PERCENTILE} = ${data.nf_dbfs?.toFixed(1)} dBFS/Hz`;
+  drawPSD();
+});
+
+// ── Durée ──
+function startDurTimer() {
+  clearInterval(durTimer);
+  durTimer = setInterval(() => {
+    if (!sessionStart) return;
+    const s = Math.floor((Date.now() - sessionStart) / 1000);
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    document.getElementById('m-dur').textContent = mm+':'+ss;
+  }, 1000);
+}
+
+// ── PSD Canvas ──
+const psdCanvas = document.getElementById('psd-canvas');
+const psdCtx    = psdCanvas.getContext('2d');
+
+function drawPSD() {
+  const W = psdCanvas.offsetWidth || 600;
+  const H = 240;
+  if (psdCanvas.width !== W || psdCanvas.height !== H) {
+    psdCanvas.width = W; psdCanvas.height = H;
+  }
+  const dbLow = -160, dbHigh = -40;
+  psdCtx.fillStyle = '#050709'; psdCtx.fillRect(0,0,W,H);
+
+  // Grille
+  for (let db = dbLow; db <= dbHigh; db += 10) {
+    const y = H - (db - dbLow) / (dbHigh - dbLow) * H;
+    psdCtx.strokeStyle = db % 20 === 0 ? '#1a2535' : '#0d1218';
+    psdCtx.lineWidth = 1;
+    psdCtx.beginPath(); psdCtx.moveTo(0,y); psdCtx.lineTo(W,y); psdCtx.stroke();
+    psdCtx.fillStyle = '#2a3a55'; psdCtx.font = '8px monospace';
+    psdCtx.fillText(db, 3, y - 2);
+  }
+  [500,1000,1500,2000,2500,3000].forEach(f => {
+    const x = f / 24000 * W;
+    psdCtx.strokeStyle = '#131b28'; psdCtx.lineWidth = 1;
+    psdCtx.beginPath(); psdCtx.moveTo(x,0); psdCtx.lineTo(x,H); psdCtx.stroke();
+    psdCtx.fillStyle = '#2a3a55'; psdCtx.font = '8px monospace';
+    psdCtx.fillText(f >= 1000 ? (f/1000)+'k' : f, x+2, H-4);
+  });
+
+  if (!psdData || !psdFreqs) return;
+  const N = psdData.length;
+  const maxFreq = psdFreqs[psdFreqs.length-1] || 24000;
+
+  // Fill
+  psdCtx.beginPath();
+  psdData.forEach((v, i) => {
+    const x = psdFreqs[i] / maxFreq * W;
+    const y = H - (v - dbLow) / (dbHigh - dbLow) * H;
+    i === 0 ? psdCtx.moveTo(x,y) : psdCtx.lineTo(x,y);
+  });
+  psdCtx.lineTo(W,H); psdCtx.lineTo(0,H); psdCtx.closePath();
+  const g = psdCtx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgba(0,212,255,0.2)'); g.addColorStop(1,'rgba(0,212,255,0.01)');
+  psdCtx.fillStyle = g; psdCtx.fill();
+
+  // Line
+  psdCtx.beginPath(); psdCtx.strokeStyle='#00d4ff'; psdCtx.lineWidth=1.2;
+  psdData.forEach((v,i) => {
+    const x = psdFreqs[i] / maxFreq * W;
+    const y = H - (v - dbLow) / (dbHigh - dbLow) * H;
+    i === 0 ? psdCtx.moveTo(x,y) : psdCtx.lineTo(x,y);
+  });
+  psdCtx.stroke();
+
+  // P10 line
+  const sorted = [...psdData].sort((a,b)=>a-b);
+  const p10 = sorted[Math.floor(sorted.length * PERCENTILE / 100)];
+  if (p10) {
+    const py = H - (p10 - dbLow) / (dbHigh - dbLow) * H;
+    psdCtx.strokeStyle='rgba(0,230,118,0.7)'; psdCtx.setLineDash([4,5]);
+    psdCtx.lineWidth=1;
+    psdCtx.beginPath(); psdCtx.moveTo(0,py); psdCtx.lineTo(W,py); psdCtx.stroke();
+    psdCtx.setLineDash([]);
+    psdCtx.fillStyle='#00e676'; psdCtx.font='9px monospace';
+    psdCtx.fillText(`P${PERCENTILE} = ${p10.toFixed(1)} dBFS/Hz`, 8, py-4);
+  }
+}
+
+// Tooltip PSD
+psdCanvas.addEventListener('mousemove', e => {
+  if (!psdData || !psdFreqs) return;
+  const rect = psdCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const maxFreq = psdFreqs[psdFreqs.length-1] || 24000;
+  const targetFreq = x / psdCanvas.offsetWidth * maxFreq;
+  let minDist = Infinity, idx = 0;
+  psdFreqs.forEach((f,i) => { const d=Math.abs(f-targetFreq); if(d<minDist){minDist=d;idx=i;} });
+  document.getElementById('psd-tooltip').textContent =
+    `${Math.round(psdFreqs[idx])} Hz  →  ${psdData[idx]?.toFixed(1)} dBFS/Hz`;
+});
+psdCanvas.addEventListener('mouseleave', () => {
+  document.getElementById('psd-tooltip').textContent = '';
+});
+
+// ── Historique Canvas ──
+const histCanvas = document.getElementById('hist-canvas');
+const histCtx    = histCanvas.getContext('2d');
+
+function drawHist() {
+  const W = histCanvas.offsetWidth || 600;
+  const H = 140;
+  if (histCanvas.width !== W || histCanvas.height !== H) {
+    histCanvas.width = W; histCanvas.height = H;
+  }
+  histCtx.fillStyle = '#050709'; histCtx.fillRect(0,0,W,H);
+  if (nfHistory.length < 2) return;
+
+  const vals = nfHistory.map(h=>h.nf);
+  const vMin = Math.min(...vals) - 4, vMax = Math.max(...vals) + 4;
+  const t0 = nfHistory[0].t;
+  const step = W / (nfHistory.length - 1);
+
+  // Fill
+  histCtx.beginPath();
+  nfHistory.forEach((h,i) => {
+    const x = i * step;
+    const y = H - (h.nf - vMin) / (vMax - vMin) * H;
+    i===0 ? histCtx.moveTo(x,y) : histCtx.lineTo(x,y);
+  });
+  histCtx.lineTo((nfHistory.length-1)*step, H);
+  histCtx.lineTo(0,H); histCtx.closePath();
+  const g2 = histCtx.createLinearGradient(0,0,0,H);
+  g2.addColorStop(0,'rgba(0,212,255,0.2)'); g2.addColorStop(1,'rgba(0,212,255,0.01)');
+  histCtx.fillStyle = g2; histCtx.fill();
+
+  histCtx.beginPath(); histCtx.strokeStyle='#00d4ff'; histCtx.lineWidth=1.2;
+  nfHistory.forEach((h,i) => {
+    const x = i*step, y = H - (h.nf-vMin)/(vMax-vMin)*H;
+    i===0 ? histCtx.moveTo(x,y) : histCtx.lineTo(x,y);
+  });
+  histCtx.stroke();
+
+  // Min line
+  if (nfMin !== Infinity) {
+    const my = H - (nfMin - vMin) / (vMax - vMin) * H;
+    histCtx.strokeStyle='rgba(0,230,118,0.6)';
+    histCtx.setLineDash([3,5]); histCtx.lineWidth=1;
+    histCtx.beginPath(); histCtx.moveTo(0,my); histCtx.lineTo(W,my); histCtx.stroke();
+    histCtx.setLineDash([]);
+    histCtx.fillStyle='#00e676'; histCtx.font='9px monospace';
+    histCtx.fillText(`min=${nfMin.toFixed(1)}`, 6, my-3);
+  }
+}
+
+// ── CAT Commands ──
+function sendFreq() {
+  const mhz = parseFloat(document.getElementById('cat-freq-input').value);
+  if (isNaN(mhz)) return;
+  socket.emit('cat_command', {station_id: STATION_ID, type: 'set_freq', freq_hz: Math.round(mhz*1e6)});
+}
+function sendFreqMHz(mhz) {
+  document.getElementById('cat-freq-input').value = mhz.toFixed(3);
+  socket.emit('cat_command', {station_id: STATION_ID, type: 'set_freq', freq_hz: Math.round(mhz*1e6)});
+}
+function sendMode(mode) {
+  socket.emit('cat_command', {station_id: STATION_ID, type: 'set_mode', mode});
+}
+
+// ── Calibration ──
+function calibrate() {
+  const refDbm = parseFloat(document.getElementById('cal-ref').value);
+  const currentNF = parseFloat(document.getElementById('nf-big').textContent);
+  if (isNaN(currentNF)) { alert('Aucune mesure en cours'); return; }
+  calOffset = refDbm - currentNF;
+  document.getElementById('cal-result').textContent =
+    `Offset : ${calOffset >= 0 ? '+' : ''}${calOffset.toFixed(1)} dB  ` +
+    `(réf. ${refDbm} dBm = ${currentNF.toFixed(1)} dBFS/Hz)`;
+  document.getElementById('cal-result').style.color = 'var(--amber)';
+  // Sauvegarder sur le serveur
+  fetch(`/api/station/{{ station.id }}/calibrate`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({offset: calOffset})
+  });
+}
+
+// ── Export CSV ──
+function exportCSV() {
+  if (!nfHistory.length) { alert('Aucune donnée'); return; }
+  let csv = 'Timestamp_ISO,nf_dbfs_hz,nf_dbm_hz,freq_hz\n';
+  nfHistory.forEach(h => {
+    const dbm = calOffset !== null ? (h.nf + calOffset).toFixed(3) : '';
+    csv += `${new Date(h.t*1000).toISOString()},${h.nf.toFixed(3)},${dbm},\n`;
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = `nfm_{{ station.id }}_${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.csv`;
+  a.click();
+}
+
+// Resize
+window.addEventListener('resize', () => { drawPSD(); drawHist(); });
+</script>
+{% endblock %}
