@@ -801,4 +801,4 @@ if __name__ == "__main__":
     print(f"  → http://localhost:5000/admin  (compte admin)\n")
     import os
     port = int(os.environ.get("PORT", 10000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werzeug=True)
+    socketio.run(app, host="0.0.0.0", port=port)
