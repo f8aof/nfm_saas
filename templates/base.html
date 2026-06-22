@@ -1,66 +1,55 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% block title %}NFM Platform{% endblock %} — Noise Floor Meter</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-{% block head %}{% endblock %}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}NFM Platform{% endblock %}</title>
+    <style>
+        :root {
+            --cyan: #00f2fe;
+            --dim: #a0aec0;
+            --text: #ffffff;
+            --bg: #0f172a;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .card {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid #475569;
+            color: white;
+        }
+    </style>
 </head>
 <body>
-
-<nav class="navbar">
-  <a class="navbar-brand" href="{{ url_for('index') }}">
-    <span>◈</span> NFM<span class="dot">·</span>PLATFORM
-  </a>
-  {% if session.get('user_id') %}
-  <div class="navbar-nav">
-    <a class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}"
-       href="{{ url_for('dashboard') }}">Dashboard</a>
-    <a class="nav-link" href="{{ url_for('station_new') }}">+ Station</a>
-    <a class="nav-link {% if request.endpoint=='guide' %}active{% endif %}"
-       href="{{ url_for('guide') }}">Guide propagation</a>
-    {% if session.get('is_admin') %}
-    <a class="nav-link" href="{{ url_for('admin') }}"
-       style="color:var(--amber)">Admin</a>
-    {% endif %}
-  </div>
-  <span class="nav-callsign">{{ session.callsign }}</span>
-  <a class="nav-link" href="{{ url_for('logout') }}">Quitter</a>
-  {% else %}
-  <div class="navbar-nav" style="margin-left:auto">
-    <a class="nav-link" href="{{ url_for('guide') }}">Guide propagation</a>
-    <a class="nav-link" href="{{ url_for('login') }}">Connexion</a>
-    <a class="btn btn-primary btn-sm" href="{{ url_for('register') }}">S'inscrire</a>
-  </div>
-  {% endif %}
-</nav>
-
-<main>
-  <div class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in messages %}
-        <div class="alert alert-{{ 'success' if cat=='success' else 'error' }}">
-          {{ msg }}
-        </div>
-      {% endfor %}
-    {% endwith %}
-    {% block content %}{% endblock %}
-  </div>
-</main>
-
-<footer>
-  NFM Platform · Noise Floor Meter · F8AOF ·
-  <span id="footer-time" style="font-family:monospace"></span>
-</footer>
-
-<script>
-setInterval(() => {
-  document.getElementById('footer-time').textContent =
-    new Date().toLocaleTimeString('fr-FR');
-}, 1000);
-</script>
-{% block scripts %}{% endblock %}
+    {% block content %}
+    {% endblock %}
 </body>
 </html>
